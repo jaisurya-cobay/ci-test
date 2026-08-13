@@ -1,0 +1,15 @@
+# Normalize to LF in the repo AND in the working tree, on every platform.
+#
+# Without eol=lf, a Windows clone with core.autocrlf=true checks files out as
+# CRLF, and Prettier's endOfLine: "lf" then fails every file -- locally only,
+# since CI runs on Linux. That is a trap: green CI, red pre-commit hook.
+* text=auto eol=lf
+
+# Shell scripts must keep LF or they will not execute.
+*.sh text eol=lf
+.husky/* text eol=lf
+
+# Never touch binaries.
+*.png binary
+*.jpg binary
+*.ico binary
