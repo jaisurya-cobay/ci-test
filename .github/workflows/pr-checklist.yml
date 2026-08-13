@@ -1,0 +1,107 @@
+name: PR Checklist
+
+# ---------------------------------------------------------
+#  Appends a target-branch-specific checklist to every PR.
+#
+#  WHY A WORKFLOW AT ALL:
+#  GitHub resolves PR templates in the browser BEFORE the PR exists, so it
+#  cannot know the base branch at that moment. There is no native
+#  "template per base branch" feature. The only automatic option is to edit
+#  the PR body after it opens -- which is what this does.
+#
+#  WHY pull_request_target AND NOT pull_request:
+#  On `pull_request`, PRs from forks get a READ-ONLY GITHUB_TOKEN, so the
+#  edit would fail with 403. `pull_request_target` runs in the base repo's
+#  context with a writable token.
+#
+#  WHY THAT IS SAFE HERE:
+#  The usual danger of pull_request_target is checking out and executing
+#  untrusted PR-branch code with a privileged token. This job never checks
+#  out anything at all. It reads one markdown file via the API and calls
+#  `gh pr edit`. No PR code touches the runner.
+#
+#  BEHAVIOUR -- the TARGET branch decides, the source branch is irrelevant:
+#    base = qa      -> .github/PULL_REQUEST_TEMPLATE/qa.md
+#    base = develop -> .github/PULL_REQUEST_TEMPLATE/develop.md
+#    base = master  -> .github/PULL_REQUEST_TEMPLATE/master.md
+#
+#  It APPENDS rather than replaces, so a developer's own description is
+#  never destroyed. The marker comment makes it idempotent -- a reopen or a
+#  manual re-run cannot duplicate the block.
+#
+#  DEPLOYMENT NOTE: pull_request_target always runs the copy of this file on
+#  the DEFAULT branch (master). It will not fire until merged there.
+# ---------------------------------------------------------
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+    branches: [qa, develop, master] # `branches` filters the BASE ref for PR events
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-checklist-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: Append target-branch checklist
+    runs-on: ubuntu-latest
+    steps:
+      - name: Append checklist for base branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          # Templates are read from the DEFAULT branch (master), not the base
+          # branch. This workflow only ever runs the copy on master anyway,
+          # so keeping the templates there too means one source of truth --
+          # no need to seed qa and develop with copies, and no drift.
+          TEMPLATE_REF: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          MARKER='<!-- pr-checklist:start -->'
+          TEMPLATE_PATH=".github/PULL_REQUEST_TEMPLATE/${BASE_REF}.md"
+
+          # Read the template via the API -- no checkout, so no untrusted PR
+          # code ever lands on the runner. A missing template is not an error.
+          if ! CONTENT_B64=$(gh api \
+                "repos/${REPO}/contents/${TEMPLATE_PATH}?ref=${TEMPLATE_REF}" \
+                --jq '.content' 2>/dev/null); then
+            echo "No template at ${TEMPLATE_PATH} on '${TEMPLATE_REF}' -- nothing to do."
+            exit 0
+          fi
+
+          printf '%s' "$CONTENT_B64" | tr -d '\n' | base64 -d > /tmp/checklist.md
+
+          if [ ! -s /tmp/checklist.md ]; then
+            echo "Template ${TEMPLATE_PATH} is empty -- nothing to do."
+            exit 0
+          fi
+
+          BODY=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json body --jq '.body // ""')
+
+          # Idempotency guard: if our block is already there, do nothing.
+          case "$BODY" in
+            *"$MARKER"*)
+              echo "Checklist already present on PR #${PR_NUMBER} -- skipping."
+              exit 0
+              ;;
+          esac
+
+          {
+            printf '%s\n\n' "$BODY"
+            cat /tmp/checklist.md
+          } > /tmp/pr-body.md
+
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --body-file /tmp/pr-body.md
+
+          echo "### PR checklist applied" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **PR:** #${PR_NUMBER}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Target branch:** \`${BASE_REF}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Template:** \`${TEMPLATE_PATH}\` (read from \`${TEMPLATE_REF}\`)" >> "$GITHUB_STEP_SUMMARY"
