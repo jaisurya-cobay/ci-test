@@ -147,7 +147,7 @@ describe('GET /api/tasks', () => {
   });
 
   it('rejects invalid query parameters', async () => {
-    for (const query of ['?completed=maybe', '?limit=-1', '?limit=abc', '?limit=101', '?offset=1.5']) {
+    for (const query of ['?completed=maybe', '?limit=-1', '?limit=abc', '?limit=101', '?offset=1.5', '?limit=']) {
       const res = await request('GET', `/api/tasks${query}`);
       assert.equal(res.status, 400, `expected 400 for ${query}`);
     }

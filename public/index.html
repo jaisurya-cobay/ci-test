@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tasks</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>&#9989;</text></svg>" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="app__header">
+        <h1>Tasks</h1>
+        <p class="app__count" id="count" aria-live="polite"></p>
+      </header>
+
+      <form class="composer" id="composer" autocomplete="off">
+        <input
+          class="composer__title"
+          id="title"
+          name="title"
+          type="text"
+          maxlength="200"
+          placeholder="What needs doing?"
+          aria-label="Task title"
+          required
+        />
+        <input
+          class="composer__description"
+          id="description"
+          name="description"
+          type="text"
+          maxlength="2000"
+          placeholder="Notes (optional)"
+          aria-label="Task description"
+        />
+        <button class="composer__submit" type="submit">Add</button>
+      </form>
+
+      <div class="banner" id="banner" role="alert" hidden></div>
+
+      <nav class="filters" id="filters" aria-label="Filter tasks">
+        <button type="button" class="filters__btn is-active" data-filter="all" aria-pressed="true">All</button>
+        <button type="button" class="filters__btn" data-filter="open" aria-pressed="false">Open</button>
+        <button type="button" class="filters__btn" data-filter="done" aria-pressed="false">Done</button>
+      </nav>
+
+      <ul class="tasks" id="tasks"></ul>
+
+      <p class="empty" id="empty" hidden></p>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

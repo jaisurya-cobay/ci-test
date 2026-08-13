@@ -28,8 +28,12 @@ export async function startTestServer() {
     };
   }
 
+  // Exposed for tests that need the raw response rather than parsed JSON.
+  request.base = base;
+
   return {
     request,
+    base,
     close: () => new Promise((resolve) => server.close(resolve)),
   };
 }

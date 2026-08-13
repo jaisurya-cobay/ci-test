@@ -107,7 +107,10 @@ export function parseListQuery(query) {
 
   for (const [field, max] of [['limit', 100], ['offset', Infinity]]) {
     if (query[field] === undefined) continue;
-    const value = Number(query[field]);
+    const raw = query[field];
+    // Number('') and Number('  ') are both 0, so an empty ?limit= would
+    // silently mean "return nothing". Reject it instead.
+    const value = typeof raw === 'string' && raw.trim() === '' ? NaN : Number(raw);
     if (!Number.isInteger(value) || value < 0 || value > max) {
       errors.push({
         field,

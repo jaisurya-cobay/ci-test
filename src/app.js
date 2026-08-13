@@ -1,8 +1,13 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import express from 'express';
 
 import { ApiError } from './errors.js';
 import { createTaskRouter } from './routes/tasks.js';
 import { TaskStore } from './store.js';
+
+const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
 export function createApp({ store = new TaskStore() } = {}) {
   const app = express();
@@ -14,6 +19,10 @@ export function createApp({ store = new TaskStore() } = {}) {
   });
 
   app.use('/api/tasks', createTaskRouter(store));
+
+  // Browser UI. Mounted after the API so a stray public/ file can never
+  // shadow a route.
+  app.use(express.static(PUBLIC_DIR));
 
   app.use((req, res) => {
     res.status(404).json({
