@@ -24,7 +24,7 @@ describe('TaskStore.create', () => {
     );
     assert.equal(task.title, 'Write tests');
     assert.equal(task.description, null);
-    assert.equal(task.completed, false);
+    assert.equal(task.completed, true); // DRILL: deliberate failure
     assert.equal(task.createdAt, task.updatedAt);
     assert.ok(!Number.isNaN(Date.parse(task.createdAt)));
   });
