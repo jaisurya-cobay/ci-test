@@ -1,0 +1,7 @@
+node_modules/
+coverage/
+package-lock.json
+
+# Kept byte-identical to the source template pack. Prettier pads blank lines
+# around the <!-- pr-checklist --> markers, which is pure drift.
+.github/PULL_REQUEST_TEMPLATE/

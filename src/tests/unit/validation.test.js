@@ -1,18 +1,16 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
 
-import { ApiError } from '../../src/errors.js';
-import {
-  parseCreateBody,
-  parseListQuery,
-  parseUpdateBody,
-} from '../../src/validation.js';
+import { ApiError } from '../../errors.js';
+import { parseCreateBody, parseListQuery, parseUpdateBody } from '../../validation.js';
 
 /** Asserts fn throws an ApiError, and returns it for further checks. */
 function throws(fn, { status = 400, code = 'bad_request' } = {}) {
   let error;
   assert.throws(fn, (err) => {
-    assert.ok(err instanceof ApiError, `expected ApiError, got ${err?.constructor?.name}`);
+    assert.ok(
+      err instanceof ApiError,
+      `expected ApiError, got ${err?.constructor?.name}`,
+    );
     error = err;
     return true;
   });
@@ -25,15 +23,19 @@ describe('parseCreateBody', () => {
   it('accepts a title alone and omits absent optional fields', () => {
     const result = parseCreateBody({ title: 'Write tests' });
     assert.deepEqual(result, { title: 'Write tests' });
-    assert.ok(!('description' in result), 'description should stay absent, not become undefined');
+    assert.ok(
+      !('description' in result),
+      'description should stay absent, not become undefined',
+    );
     assert.ok(!('completed' in result));
   });
 
   it('passes through description and completed when supplied', () => {
-    assert.deepEqual(
-      parseCreateBody({ title: 'a', description: 'b', completed: true }),
-      { title: 'a', description: 'b', completed: true },
-    );
+    assert.deepEqual(parseCreateBody({ title: 'a', description: 'b', completed: true }), {
+      title: 'a',
+      description: 'b',
+      completed: true,
+    });
   });
 
   it('trims surrounding whitespace from the title', () => {
@@ -77,7 +79,9 @@ describe('parseCreateBody', () => {
   });
 
   it('rejects a description over 2000 characters', () => {
-    const err = throws(() => parseCreateBody({ title: 'a', description: 'y'.repeat(2001) }));
+    const err = throws(() =>
+      parseCreateBody({ title: 'a', description: 'y'.repeat(2001) }),
+    );
     assert.equal(err.details[0].message, 'must be at most 2000 characters');
   });
 
@@ -97,7 +101,9 @@ describe('parseCreateBody', () => {
   });
 
   it('collects every field error in one response', () => {
-    const err = throws(() => parseCreateBody({ title: '', description: 1, completed: 'x' }));
+    const err = throws(() =>
+      parseCreateBody({ title: '', description: 1, completed: 'x' }),
+    );
     assert.deepEqual(
       err.details.map((d) => d.field),
       ['title', 'description', 'completed'],
@@ -178,11 +184,17 @@ describe('parseListQuery', () => {
   });
 
   it('coerces limit and offset to numbers', () => {
-    assert.deepEqual(parseListQuery({ limit: '10', offset: '5' }), { limit: 10, offset: 5 });
+    assert.deepEqual(parseListQuery({ limit: '10', offset: '5' }), {
+      limit: 10,
+      offset: 5,
+    });
   });
 
   it('accepts the boundary values 0 and 100', () => {
-    assert.deepEqual(parseListQuery({ limit: '0', offset: '0' }), { limit: 0, offset: 0 });
+    assert.deepEqual(parseListQuery({ limit: '0', offset: '0' }), {
+      limit: 0,
+      offset: 0,
+    });
     assert.deepEqual(parseListQuery({ limit: '100' }), { limit: 100 });
   });
 

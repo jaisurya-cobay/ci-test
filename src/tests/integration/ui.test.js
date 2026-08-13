@@ -1,23 +1,26 @@
 import assert from 'node:assert/strict';
-import { after, before, describe, it } from 'node:test';
 
 import { startTestServer } from './helpers.js';
 
 let request;
 let close;
 
-before(async () => {
+beforeAll(async () => {
   ({ request, close } = await startTestServer());
 });
 
-after(async () => {
+afterAll(async () => {
   await close();
 });
 
 // startTestServer parses bodies as JSON, so fetch the raw text directly.
 async function raw(path) {
   const res = await fetch(`${request.base}${path}`);
-  return { status: res.status, type: res.headers.get('content-type'), text: await res.text() };
+  return {
+    status: res.status,
+    type: res.headers.get('content-type'),
+    text: await res.text(),
+  };
 }
 
 describe('static UI', () => {

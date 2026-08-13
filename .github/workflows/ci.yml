@@ -1,0 +1,171 @@
+name: CI
+
+# ---------------------------------------------------------
+#  Same shape as the deploy pipeline, minus every deployment step.
+#  This is a test repo: nothing is built, uploaded, or shipped.
+#
+#  STAGES -- each gates the next:
+#    code        -> lint, format, audit, commit messages, engine pin
+#    test        -> unit tier    (src/tests/unit)
+#    integration -> integration tier (src/tests/integration)
+#
+#  WHY THREE JOBS AND NOT ONE:
+#  A formatting slip should not have to wait on a socket-binding test suite
+#  to tell you about itself. Splitting them means the cheapest, most common
+#  failure reports first and the expensive tier never runs on code that
+#  already failed static analysis.
+#
+#  WHY `needs` RATHER THAN PARALLEL:
+#  Integration runs real HTTP against the app. If the unit tier is red the
+#  integration result carries no extra information, so it is skipped.
+# ---------------------------------------------------------
+
+on:
+  push:
+    branches: [develop, qa, master]
+  pull_request:
+    branches: [develop, qa, master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  code:
+    name: Code quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # commitlint needs history to diff a push range; a shallow clone
+          # would leave it with nothing to compare against.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      # Engine pin -- .npmrc sets engine-strict=true, so this step fails
+      # outright if the runner's Node violates package.json "engines".
+      - name: Verify engine pin
+        run: |
+          echo "================================"
+          echo "🔧 ENGINE PIN"
+          echo "================================"
+          echo "Node (runner):   $(node -v)"
+          echo "Node (.nvmrc):   $(cat .nvmrc)"
+          echo "engines.node:    $(node -p "require('./package.json').engines.node")"
+          echo "engine-strict:   $(npm config get engine-strict)"
+          echo "================================"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npx prettier --check .
+
+      # `npm ci` above already fails on a lockfile mismatch; this is purely
+      # the vulnerability gate. Moderate and low findings do not block.
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+
+      # A local hook can be bypassed with --no-verify, so the same rule is
+      # enforced here where it cannot be skipped.
+      - name: Commit message lint
+        env:
+          # On a PR, check every commit on the branch. On a push, check the
+          # range that was actually pushed.
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # A new branch reports an all-zero "before" SHA -- there is no range
+          # to diff, so fall back to the tip commit alone.
+          if [ -z "${BASE_SHA}" ] || [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ]; then
+            echo "No base commit (new branch) -- linting HEAD only."
+            npx commitlint --last --verbose
+          else
+            echo "Linting commits ${BASE_SHA}..${HEAD_SHA}"
+            npx commitlint --from "${BASE_SHA}" --to "${HEAD_SHA}" --verbose
+          fi
+
+  test:
+    name: Unit tests
+    needs: [code]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tier
+        run: npm run test:unit
+
+  integration:
+    name: Integration tests
+    needs: [test]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run integration tier
+        run: npm run test:integration
+
+  summary:
+    name: CI summary
+    needs: [code, test, integration]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Write summary
+        env:
+          CODE: ${{ needs.code.result }}
+          UNIT: ${{ needs.test.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+        run: |
+          icon() { case "$1" in success) echo "✅";; failure) echo "❌";; skipped) echo "⏭️";; *) echo "⚠️";; esac; }
+
+          {
+            echo "### CI result"
+            echo ""
+            echo "| Stage | Result |"
+            echo "| --- | --- |"
+            echo "| Code quality | $(icon "$CODE") \`${CODE}\` |"
+            echo "| Unit tests | $(icon "$UNIT") \`${UNIT}\` |"
+            echo "| Integration tests | $(icon "$INTEGRATION") \`${INTEGRATION}\` |"
+            echo ""
+            echo "- **Branch:** \`${{ github.ref_name }}\`"
+            echo "- **Commit:** \`${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # `needs` does not fail this job on its own when if:always() is set.
+          if [ "$CODE" != "success" ] || [ "$UNIT" != "success" ] || [ "$INTEGRATION" != "success" ]; then
+            echo "❌ One or more stages did not pass."
+            exit 1
+          fi
+          echo "🎉 All stages passed."

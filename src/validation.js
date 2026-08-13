@@ -105,7 +105,10 @@ export function parseListQuery(query) {
     }
   }
 
-  for (const [field, max] of [['limit', 100], ['offset', Infinity]]) {
+  for (const [field, max] of [
+    ['limit', 100],
+    ['offset', Infinity],
+  ]) {
     if (query[field] === undefined) continue;
     const raw = query[field];
     // Number('') and Number('  ') are both 0, so an empty ?limit= would

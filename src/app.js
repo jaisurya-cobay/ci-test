@@ -7,7 +7,11 @@ import { ApiError } from './errors.js';
 import { createTaskRouter } from './routes/tasks.js';
 import { TaskStore } from './store.js';
 
-const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+const PUBLIC_DIR = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'public',
+);
 
 export function createApp({ store = new TaskStore() } = {}) {
   const app = express();
@@ -36,7 +40,11 @@ export function createApp({ store = new TaskStore() } = {}) {
 
     if (err instanceof ApiError) {
       return res.status(err.status).json({
-        error: { code: err.code, message: err.message, ...(err.details && { details: err.details }) },
+        error: {
+          code: err.code,
+          message: err.message,
+          ...(err.details && { details: err.details }),
+        },
       });
     }
     // Malformed JSON from express.json().

@@ -77,7 +77,10 @@ function renderTask(task) {
   checkbox.type = 'checkbox';
   checkbox.className = 'task__check';
   checkbox.checked = task.completed;
-  checkbox.setAttribute('aria-label', `Mark "${task.title}" as ${task.completed ? 'open' : 'done'}`);
+  checkbox.setAttribute(
+    'aria-label',
+    `Mark "${task.title}" as ${task.completed ? 'open' : 'done'}`,
+  );
   checkbox.addEventListener('change', () => toggle(task, li));
 
   const body = document.createElement('div');
@@ -120,7 +123,8 @@ function render() {
   els.empty.hidden = visible.length > 0;
 
   const open = tasks.filter((t) => !t.completed).length;
-  els.count.textContent = tasks.length === 0 ? '' : `${open} open · ${tasks.length} total`;
+  els.count.textContent =
+    tasks.length === 0 ? '' : `${open} open · ${tasks.length} total`;
 }
 
 async function load() {

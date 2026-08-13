@@ -1,4 +1,4 @@
-import { createApp } from '../src/app.js';
+import { createApp } from '../../app.js';
 
 /**
  * Boots the app on an ephemeral port and returns a `request` helper plus a

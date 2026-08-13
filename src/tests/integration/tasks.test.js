@@ -1,16 +1,15 @@
 import assert from 'node:assert/strict';
-import { after, before, beforeEach, describe, it } from 'node:test';
 
 import { createTask, startTestServer } from './helpers.js';
 
 let request;
 let close;
 
-before(async () => {
+beforeAll(async () => {
   ({ request, close } = await startTestServer());
 });
 
-after(async () => {
+afterAll(async () => {
   await close();
 });
 
@@ -57,7 +56,9 @@ describe('POST /api/tasks', () => {
     const res = await request('POST', '/api/tasks', { description: 'no title' });
     assert.equal(res.status, 400);
     assert.equal(res.body.error.code, 'bad_request');
-    assert.deepEqual(res.body.error.details, [{ field: 'title', message: 'is required' }]);
+    assert.deepEqual(res.body.error.details, [
+      { field: 'title', message: 'is required' },
+    ]);
   });
 
   it('rejects a whitespace-only title', async () => {
@@ -147,7 +148,14 @@ describe('GET /api/tasks', () => {
   });
 
   it('rejects invalid query parameters', async () => {
-    for (const query of ['?completed=maybe', '?limit=-1', '?limit=abc', '?limit=101', '?offset=1.5', '?limit=']) {
+    for (const query of [
+      '?completed=maybe',
+      '?limit=-1',
+      '?limit=abc',
+      '?limit=101',
+      '?offset=1.5',
+      '?limit=',
+    ]) {
       const res = await request('GET', `/api/tasks${query}`);
       assert.equal(res.status, 400, `expected 400 for ${query}`);
     }
@@ -171,7 +179,10 @@ describe('GET /api/tasks/:id', () => {
 
 describe('PATCH /api/tasks/:id', () => {
   it('updates only the supplied fields', async () => {
-    const created = await createTask(request, { title: 'Before', description: 'keep me' });
+    const created = await createTask(request, {
+      title: 'Before',
+      description: 'keep me',
+    });
     const res = await request('PATCH', `/api/tasks/${created.id}`, { completed: true });
 
     assert.equal(res.status, 200);

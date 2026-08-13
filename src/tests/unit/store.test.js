@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
-import { beforeEach, describe, it } from 'node:test';
 
-import { TaskStore } from '../../src/store.js';
+import { TaskStore } from '../../store.js';
 
 let store;
 
@@ -19,7 +18,10 @@ describe('TaskStore.create', () => {
   it('assigns a uuid, timestamps, and defaults', async () => {
     const task = await store.create({ title: 'Write tests' });
 
-    assert.match(task.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    assert.match(
+      task.id,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
     assert.equal(task.title, 'Write tests');
     assert.equal(task.description, null);
     assert.equal(task.completed, false);
@@ -70,14 +72,18 @@ describe('TaskStore.list', () => {
   it('orders newest first', async () => {
     await seed('first', 'second', 'third');
     const { tasks } = await store.list();
-    assert.deepEqual(tasks.map((t) => t.title), ['third', 'second', 'first']);
+    assert.deepEqual(
+      tasks.map((t) => t.title),
+      ['third', 'second', 'first'],
+    );
   });
 
   it('orders by insertion, not by createdAt, when timestamps collide', async () => {
     // Created in a tight loop, so several share a millisecond — insertion
     // order must still decide.
     const created = await seed(...Array.from({ length: 25 }, (_, i) => `task-${i}`));
-    const sharedTimestamps = new Set(created.map((t) => t.createdAt)).size < created.length;
+    const sharedTimestamps =
+      new Set(created.map((t) => t.createdAt)).size < created.length;
 
     const { tasks } = await store.list();
     assert.deepEqual(
@@ -110,7 +116,10 @@ describe('TaskStore.list', () => {
   it('applies limit and offset', async () => {
     await seed('a', 'b', 'c', 'd'); // listed as d, c, b, a
     const { tasks } = await store.list({ limit: 2, offset: 1 });
-    assert.deepEqual(tasks.map((t) => t.title), ['c', 'b']);
+    assert.deepEqual(
+      tasks.map((t) => t.title),
+      ['c', 'b'],
+    );
   });
 
   it('reports total before pagination', async () => {
@@ -200,7 +209,10 @@ describe('TaskStore.update', () => {
     await store.update(a.id, { title: 'a-updated' });
 
     const { tasks } = await store.list();
-    assert.deepEqual(tasks.map((t) => t.title), ['c', 'b', 'a-updated']);
+    assert.deepEqual(
+      tasks.map((t) => t.title),
+      ['c', 'b', 'a-updated'],
+    );
   });
 
   it('does not mutate the previously returned object', async () => {
@@ -231,7 +243,10 @@ describe('TaskStore.remove', () => {
   it('leaves the remaining tasks in order', async () => {
     const [, b] = await seed('a', 'b', 'c');
     await store.remove(b.id);
-    assert.deepEqual((await store.list()).tasks.map((t) => t.title), ['c', 'a']);
+    assert.deepEqual(
+      (await store.list()).tasks.map((t) => t.title),
+      ['c', 'a'],
+    );
   });
 
   it('does not reuse the ordering slot of a deleted task', async () => {
@@ -239,7 +254,10 @@ describe('TaskStore.remove', () => {
     await store.remove(a.id);
     await store.create({ title: 'c' });
 
-    assert.deepEqual((await store.list()).tasks.map((t) => t.title), ['c', 'b']);
+    assert.deepEqual(
+      (await store.list()).tasks.map((t) => t.title),
+      ['c', 'b'],
+    );
   });
 });
 
@@ -254,7 +272,10 @@ describe('TaskStore.clear', () => {
     await seed('a', 'b');
     await store.clear();
     await seed('c', 'd');
-    assert.deepEqual((await store.list()).tasks.map((t) => t.title), ['d', 'c']);
+    assert.deepEqual(
+      (await store.list()).tasks.map((t) => t.title),
+      ['d', 'c'],
+    );
   });
 });
 

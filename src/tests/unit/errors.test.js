@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
 
-import { ApiError, badRequest, notFound } from '../../src/errors.js';
+import { ApiError, badRequest, notFound } from '../../errors.js';
 
 describe('ApiError', () => {
   it('is a real Error carrying status, code, and details', () => {
