@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
  */
 export class TaskStore {
   #tasks = new Map();
-  // Insertion counter: createdAt alone can't order tasks created in the saame
+  // Insertion counter: createdAt alone can't order tasks created in the same
   // millisecond, so ordering keys off this instead. Never exposed in responses.
   #seq = 0;
   #order = new Map();
