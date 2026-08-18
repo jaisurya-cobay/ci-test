@@ -1,7 +1,5 @@
 import { createApp } from './app.js';
 
-const unusedLintTestVar = 'intentional-ci-lint-error';
-
 const port = Number(process.env.PORT ?? 3000);
 const app = createApp();
 
