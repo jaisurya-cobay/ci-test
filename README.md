@@ -8,7 +8,7 @@ on restart.
 
 Node.js 20 or newer. The repo pins **24.19.0** in [.nvmrc](.nvmrc), and
 [.npmrc](.npmrc) sets `engine-strict=true`, so `npm install` refuses to run on a
-Node that violates `engines` rather than failing later at runtime.
+Node that violates the `engines` rather than failing later at runtime.
 
 ```bash
 nvm use    # picks up .nvmrc
