@@ -218,7 +218,6 @@ data, and every method is async. Implement the same interface (`list`, `get`,
 createApp({ store: new PostgresTaskStore(pool) });
 ```
 
-
 <!-- test -->
 <!-- 222 -->
 <!-- 3332 -->
