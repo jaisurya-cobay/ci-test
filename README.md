@@ -217,3 +217,5 @@ data, and every method is async. Implement the same interface (`list`, `get`,
 ```js
 createApp({ store: new PostgresTaskStore(pool) });
 ```
+
+<!-- . -->
