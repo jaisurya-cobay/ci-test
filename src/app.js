@@ -24,7 +24,7 @@ export function createApp({ store = new TaskStore() } = {}) {
 
   app.use('/api/tasks', createTaskRouter(store));
 
-  // Browser UI. Mounted after the API so a stray public/ file can never
+  // Browser UI. Mounted after the API so a stray public/  fffile can never
   // shadow a route.
   app.use(express.static(PUBLIC_DIR));
 
@@ -47,7 +47,7 @@ export function createApp({ store = new TaskStore() } = {}) {
         },
       });
     }
-    // Malformed JSON from express.json().
+    // Malformed JSON from express.json()...
     if (err.type === 'entity.parse.failed') {
       return res.status(400).json({
         error: { code: 'invalid_json', message: 'Request body is not valid JSON' },
