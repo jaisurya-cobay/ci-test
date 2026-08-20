@@ -1,33 +1,10 @@
-name: CI 
-
-# ---------------------------------------------------------
-#  Same three tiers as ci.yml, but triggered ONLY by a merge landing on
-#  develop or qa. Nothing here runs pre-merge and nothing deploys.
-#
-#  WHY `push:` IS THE MERGE TRIGGER:
-#  Once the ruleset requires a pull request, a branch cannot be written to
-#  any other way -- so every push event on develop/qa IS a merge. That makes
-#  `push:` the precise trigger, and it has the property the alternative
-#  lacks: it runs against the real post-merge commit.
-#
-#  WHY NOT `pull_request: types: [closed]`:
-#  That fires on close too, so it needs an `if: merged == true` guard, and it
-#  still reports in the PR's context against refs/pull/N/merge -- a ref that
-#  describes the pre-merge preview, not what actually landed. It answers a
-#  different question than "is develop green right now".
-#
-#  NO `workflow_call` HERE:
-#  ci.yml keeps that job. This file is a leaf -- if it were callable too,
-#  the same commit could be checked twice from two directions.
-# ---------------------------------------------------------
+name: CI
 
 on:
-  push:
-    branches: [develop, qa]
+  pull_request:
+    branches: [develop]
+  workflow_call:
 
-# Distinct from ci.yml's `ci-` and deploy.yml's `deploy-` groups. Cancelling
-# is safe because this workflow only reports -- it ships nothing that could
-# be left half-applied.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
