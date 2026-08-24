@@ -22,7 +22,6 @@ concurrency:
 
 permissions:
   contents: read
-  deployments: read
 
 jobs:
   # Gates PRs into master and develop: checks that the source branch has
@@ -34,6 +33,9 @@ jobs:
     name: Staging gate
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: read
 
     steps:
       - name: Verify deployment for the target branch, or waive for hotfix
