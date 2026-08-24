@@ -1,8 +1,19 @@
 name: CI
 
+# PR-time trigger scope:
+#   -> develop  : always -- this is the one real gate before code reaches
+#                 develop, so it must run and pass here.
+#   -> master   : only for hotfix/* branches. A develop -> master PR is
+#                 promoting code that already passed this same CI at its
+#                 own PR into develop, so re-running it is redundant. A
+#                 hotfix/* branch skipped develop entirely, so PR-time CI
+#                 is its only pre-merge checkpoint.
+#
+# Post-merge (push, via workflow_call from deploy.yml): unchanged --
+# qa and develop both re-run CI after merge, gating their deploy step.
 on:
   pull_request:
-    branches: [develop,qa]
+    branches: [develop, master]
   workflow_call:
 
 concurrency:
@@ -15,6 +26,7 @@ permissions:
 jobs:
   lint:
     name: Lint
+    if: github.event_name != 'pull_request' || github.base_ref == 'develop' || startsWith(github.head_ref, 'hotfix/')
     runs-on: ubuntu-latest
 
     steps:
