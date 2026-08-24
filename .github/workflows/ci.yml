@@ -1,53 +1,14 @@
 name: CI
 
-# ---------------------------------------------------------
-#  Lint -> unit -> integration. Nothing is built or shipped.
-#
-#  HOW IT IS TRIGGERED -- two situations, never both for one commit:
-#    - pull_request  -> directly, when a PR is raised against a deploy branch
-#    - workflow_call -> from the deploy workflow on push (same pattern as
-#                       jira-notify.yml), inside the existing deploy run
-#
-#  There is deliberately no `push:` trigger. A push to develop/qa/master is
-#  not a pull_request event, and a PR event does not start the deploy
-#  workflow, so a given commit is checked exactly once.
-#
-#  WHY THREE JOBS AND NOT ONE:
-#  A lint slip should not have to wait on the test suites to report itself.
-#  Splitting them means the cheapest, most common failure reports first and
-#  the expensive tier never runs on code that already failed lint.
-#
-#  WHY `needs` RATHER THAN PARALLEL:
-#  Integration runs real HTTP against the app. If the unit tier is red the
-#  integration result carries no extra information, so it is skipped.
-#
-#  No service containers needed -- the suites run entirely in-process.
-# ---------------------------------------------------------
-
 on:
-  # Default types are opened / synchronize / reopened -- i.e. when the PR is
-  # raised and again on every push to its branch.
   pull_request:
-    branches: [develop, qa, master]
-
-  # workflow_call takes no `branches:` filter -- which branches are worth
-  # gating is the CALLER's decision, made by its own `on: push:` filter.
+    branches: [develop]
   workflow_call:
 
-# Superseded runs are pointless, so cancel them. `github.ref` (not head_ref)
-# because head_ref is only defined on pull_request and would be empty when
-# this is called from the deploy workflow. The groups cannot collide: a PR
-# ref is refs/pull/N/merge, a push ref is refs/heads/<branch>.
-#
-# NOTE: the caller must not use this same group name. A called workflow runs
-# inside the caller's run, so an identical group would make the run queue
-# behind itself and hang until it times out.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# A called workflow can only ever narrow the caller's permissions, never
-# widen them -- so the caller must grant at least this.
 permissions:
   contents: read
 
