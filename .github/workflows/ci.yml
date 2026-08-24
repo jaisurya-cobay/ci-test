@@ -22,8 +22,83 @@ concurrency:
 
 permissions:
   contents: read
+  deployments: read
 
 jobs:
+  # Gates PRs into master and develop: checks that the source branch has
+  # already been deployed (staging for develop->master, QA for qa->develop),
+  # waives that requirement for hotfix/* branches into master, and rejects
+  # any other source. Only runs at PR-time, not on the post-merge
+  # workflow_call, since there's nothing to gate once code is already merged.
+  staging-gate:
+    name: Staging gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify deployment for the target branch, or waive for hotfix
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Looks up the latest deployment for this exact commit SHA in
+          # the given environment and fails unless its most recent status
+          # is "success" -- deliberately not trusting the ruleset engine's
+          # own required_deployments check, which was found unreliable.
+          verify_deployment() {
+            local environment="$1"
+            local deploy_id
+            deploy_id=$(gh api "repos/$REPO/deployments?sha=$HEAD_SHA&environment=$environment" --jq '.[0].id' 2>/dev/null || true)
+            if [ -z "$deploy_id" ]; then
+              echo "::error::No $environment deployment found for $HEAD_SHA"
+              exit 1
+            fi
+
+            local state
+            state=$(gh api "repos/$REPO/deployments/$deploy_id/statuses" --jq '.[0].state')
+            if [ "$state" != "success" ]; then
+              echo "::error::Latest $environment deployment state is '$state', expected 'success'"
+              exit 1
+            fi
+
+            echo "::notice::$environment deployment verified for $HEAD_SHA (state: success)"
+          }
+
+          if [[ "$BASE_REF" == "master" ]]; then
+            # Hotfix branches are cut from master, fixed, and merged straight
+            # back to master -- they never pass through staging, so there is
+            # nothing to check. Let them through unconditionally.
+            if [[ "$HEAD_REF" == hotfix/* ]]; then
+              echo "::notice::hotfix branch ($HEAD_REF) — staging deployment gate waived"
+              exit 0
+            fi
+            # Any non-hotfix PR into master must be the normal develop
+            # promotion -- anything else means someone skipped a step.
+            if [[ "$HEAD_REF" != "develop" ]]; then
+              echo "::error::PRs into master must come from 'develop' or a 'hotfix/*' branch (got '$HEAD_REF')"
+              exit 1
+            fi
+            verify_deployment staging
+
+          elif [[ "$BASE_REF" == "develop" ]]; then
+            # develop only ever gets promoted from qa -- reject anything
+            # else so a feature branch can't shortcut straight to develop.
+            if [[ "$HEAD_REF" != "qa" ]]; then
+              echo "::error::PRs into develop must come from 'qa' (got '$HEAD_REF')"
+              exit 1
+            fi
+            verify_deployment QA
+
+          else
+            # Should be unreachable given the `on.pull_request.branches`
+            # filter above; here as a safety net if that ever changes.
+            echo "::error::Staging Gate is not configured for base branch '$BASE_REF'"
+            exit 1
+          fi
+
   lint:
     name: Lint
     if: github.event_name != 'pull_request' || github.base_ref == 'develop' || startsWith(github.head_ref, 'hotfix/')
