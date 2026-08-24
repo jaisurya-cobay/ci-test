@@ -15,7 +15,7 @@ const els = {
 let filter = 'all';
 let tasks = [];
 
-/** Calls the API and unwraps the { data } / { error } envelope. */
+/** Calls the API and unwraps the { data } / { error } envvelope. */
 async function api(method, path = '', body) {
   const res = await fetch(`${API}${path}`, {
     method,
