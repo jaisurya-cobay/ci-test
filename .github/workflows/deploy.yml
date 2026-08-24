@@ -1,26 +1,5 @@
 name: Deploy
 
-# ---------------------------------------------------------
-#  Runs on push to a deploy branch. Gates the deploy behind the shared CI
-#  workflow, which is pulled in via `uses:` rather than duplicated here.
-#
-#  WHY `uses:` AND NOT A `push:` TRIGGER IN ci.yml:
-#  A commit reaches this workflow only by being pushed, and reaches ci.yml's
-#  own `pull_request` trigger only by being proposed. The two events never
-#  fire for the same commit, so calling CI from here checks post-merge code
-#  exactly once, with no second run to pay for or read past.
-#
-#  WHY THE CI JOB IS A `needs:` AND NOT A STEP:
-#  A called workflow is a whole job graph, so it can only be attached at job
-#  level. `needs: [ci]` is what makes the deploy wait on all three tiers --
-#  the job is not "done" until lint, unit and integration have all passed.
-#
-#  CONCURRENCY: the group is deliberately NOT the one ci.yml uses. A called
-#  workflow runs inside this run, so a shared name would make the run queue
-#  behind itself and hang. `cancel-in-progress: false` because killing a
-#  half-finished deploy is worse than letting a superseded one land first.
-# ---------------------------------------------------------
-
 on:
   push:
     branches: [develop, qa, master]
@@ -29,14 +8,14 @@ concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
-# The called workflow can only narrow this, never widen it, so it has to be
-# granted here even though nothing in this file reads the repo directly.
 permissions:
   contents: read
 
 jobs:
+  # This `if:` is CI's branch scope -- a reusable workflow cannot filter branches itself.
   ci:
     name: CI
+    if: github.ref_name == 'develop' || github.ref_name == 'qa'
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
@@ -44,11 +23,16 @@ jobs:
   deploy:
     name: Deploy
     needs: [ci]
+    # `skipped` is required: without it, master's skipped ci job would skip this one too.
+    if: ${{ !cancelled() && (needs.ci.result == 'success' || needs.ci.result == 'skipped') }}
     runs-on: ubuntu-latest
+    # Matches cobay-server's github-actions.yml: declaring `environment:` on a
+    # job makes GitHub Actions auto-create a real Deployment record for it,
+    # which is what staging-gate.yml looks up for develop -> master PRs.
+    environment: ${{ github.ref_name == 'master' && 'production' || github.ref_name == 'qa' && 'QA' || 'staging' }}
 
     steps:
-      # Placeholder -- this repo ships nothing. The point of the job is to
-      # prove that it is reached only after the called CI workflow is green.
       - name: Deploy
         run: |
-          echo "CI passed -- deploying ${{ github.sha }} to ${{ github.ref_name }}"
+          echo "CI result: ${{ needs.ci.result }}"
+          echo "Deploying ${{ github.sha }} to ${{ github.ref_name }}"
