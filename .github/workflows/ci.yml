@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [develop, qa]
+    branches: [develop]
   workflow_call:
 
 concurrency:

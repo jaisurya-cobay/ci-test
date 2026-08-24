@@ -1,0 +1,60 @@
+name: Staging Gate
+
+# Demo/test of the hotfix strategy for cobay-server.
+#
+# Rulesets can only see the PR's TARGET branch, not its source, so a rule
+# like "required_deployments: staging" can't tell a `develop -> master`
+# promotion apart from a `hotfix/* -> master` emergency merge -- it would
+# block every hotfix forever, since a hotfix branch (cut from master) never
+# gets deployed to staging.
+#
+# This job reads the source branch itself and applies the right rule:
+#   develop -> master    : head SHA must have a successful `staging`
+#                           deployment
+#   hotfix/* -> master    : waived -- hotfixes never touch staging
+#   anything else         : rejected, to keep the topology honest
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+  deployments: read
+
+jobs:
+  staging-gate:
+    name: Staging gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify staging deployment or waive for hotfix
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [[ "$HEAD_REF" == hotfix/* ]]; then
+            echo "::notice::hotfix branch ($HEAD_REF) — staging deployment gate waived"
+            exit 0
+          fi
+
+          if [[ "$HEAD_REF" != "develop" ]]; then
+            echo "::error::PRs into master must come from 'develop' or a 'hotfix/*' branch (got '$HEAD_REF')"
+            exit 1
+          fi
+
+          DEPLOY_ID=$(gh api "repos/$REPO/deployments?sha=$HEAD_SHA&environment=staging" --jq '.[0].id' 2>/dev/null || true)
+          if [ -z "$DEPLOY_ID" ]; then
+            echo "::error::No staging deployment found for $HEAD_SHA"
+            exit 1
+          fi
+
+          STATE=$(gh api "repos/$REPO/deployments/$DEPLOY_ID/statuses" --jq '.[0].state')
+          if [ "$STATE" != "success" ]; then
+            echo "::error::Latest staging deployment state is '$STATE', expected 'success'"
+            exit 1
+          fi
+
+          echo "::notice::staging deployment verified for $HEAD_SHA (state: success)"
