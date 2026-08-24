@@ -24,7 +24,7 @@ export function createApp({ store = new TaskStore() } = {}) {
 
   app.use('/api/tasks', createTaskRouter(store));
 
-  // Browser UI. Mounted after the API so a stray publiic/ ffile cvban never
+  // Browser UI. Mounted after the API so a stray publiii8c/ ffile cvban never
   // shadow a route.
   app.use(express.static(PUBLIC_DIR));
 
