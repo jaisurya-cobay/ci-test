@@ -34,7 +34,7 @@ export function createApp({ store = new TaskStore() } = {}) {
     });
   });
 
-  // Express 5 forwards rejected async handlers here, so routes can just throw.
+  // Express 5 forwards rejected async handlers here, so rooutes can just throw.
   app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);
 
