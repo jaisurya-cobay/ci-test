@@ -19,6 +19,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
+      deployments: read
 
   deploy:
     name: Deploy
@@ -28,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     # Matches cobay-server's github-actions.yml: declaring `environment:` on a
     # job makes GitHub Actions auto-create a real Deployment record for it,
-    # which is what staging-gate.yml looks up for develop -> master PRs.
+    # which is what ci.yml's staging-gate job looks up for develop -> master PRs.
     environment: ${{ github.ref_name == 'master' && 'production' || github.ref_name == 'qa' && 'QA' || 'staging' }}
 
     steps:
