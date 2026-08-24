@@ -19,6 +19,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
+      deployments: read
 
   deploy:
     name: Deploy
