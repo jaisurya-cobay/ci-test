@@ -26,6 +26,10 @@ jobs:
     # `skipped` is required: without it, master's skipped ci job would skip this one too.
     if: ${{ !cancelled() && (needs.ci.result == 'success' || needs.ci.result == 'skipped') }}
     runs-on: ubuntu-latest
+    # Matches cobay-server's github-actions.yml: declaring `environment:` on a
+    # job makes GitHub Actions auto-create a real Deployment record for it,
+    # which is what staging-gate.yml looks up for develop -> master PRs.
+    environment: ${{ github.ref_name == 'master' && 'production' || github.ref_name == 'qa' && 'QA' || 'staging' }}
 
     steps:
       - name: Deploy
