@@ -37,3 +37,20 @@ jobs:
         run: |
           echo "CI result: ${{ needs.ci.result }}"
           echo "Deploying ${{ github.sha }} to ${{ github.ref_name }}"
+
+  # Bookkeeping only -- runs after the deploy has actually succeeded, so an
+  # issue is never moved to a status it did not really reach. It cannot fail
+  # the run; see the header comment in jira-deploy.yml.
+  jira:
+    name: Jira
+    needs: [deploy]
+    if: ${{ needs.deploy.result == 'success' }}
+    uses: ./.github/workflows/jira-deploy.yml
+    permissions:
+      contents: read
+      deployments: read
+    with:
+      # Same expression as the deploy job's `environment:` above -- keep the two in step.
+      environment: ${{ github.ref_name == 'master' && 'production' || github.ref_name == 'qa' && 'QA' || 'staging' }}
+      actor: ${{ github.actor }}
+    secrets: inherit

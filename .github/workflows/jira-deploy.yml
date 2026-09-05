@@ -1,0 +1,329 @@
+name: Jira Deploy
+
+# ---------------------------------------------------------
+#  Moves Jira issues along the deployment ladder and records each
+#  deployment as a comment on the issue.
+#
+#  Called by deploy.yml via workflow_call, AFTER the deploy job has
+#  finished successfully -- so an issue is never marked "deployed to X"
+#  unless it really reached X.
+#
+#    push to qa      -> deploy to QA         -> issue moves to  QA
+#    push to develop -> deploy to staging    -> issue moves to  Staging
+#    push to master  -> deploy to production -> issue moves to  Production
+#
+#  WHICH ISSUES:
+#  The commit range for this deploy is walked and every Jira key found in
+#  a commit subject or body (e.g. "feat(api): TEST-42 add filtering") is
+#  collected. The range base is, in order of preference:
+#    1. the SHA of the last SUCCESSFUL deployment to this same environment
+#       (read from GitHub's own Deployments API -- the records deploy.yml
+#       already creates via its `environment:` key). This is the accurate
+#       one: if a deploy fails and is retried two pushes later, the retry
+#       still covers everything the failed one was carrying.
+#    2. `github.event.before` -- the branch head before this push.
+#    3. the last 20 commits, as a floor for a brand-new branch.
+#
+#  TRANSITIONS ARE RESOLVED BY NAME, NOT BY ID:
+#  Jira transition IDs differ per project and silently change when a
+#  workflow is edited, which makes hardcoded IDs a recurring source of
+#  breakage. This asks Jira for the transitions actually available on the
+#  issue right now and picks the one whose TARGET STATUS matches the name
+#  we want. Nothing to re-sync when the board is edited.
+#
+#  IT NEVER FAILS THE DEPLOY:
+#  Bookkeeping must not break shipping. Missing credentials, an unknown
+#  issue key, or a status with no legal transition are all logged as
+#  warnings; the job still succeeds.
+#
+#  CONFIGURATION
+#  Repository secrets (Settings -> Secrets and variables -> Actions):
+#    JIRA_USER_EMAIL   Atlassian account email
+#    JIRA_API_TOKEN    https://id.atlassian.com/manage-profile/security/api-tokens
+#  Repository variables:
+#    JIRA_BASE_URL         e.g. https://your-org.atlassian.net   (required)
+#    JIRA_PROJECT_KEYS     optional space/comma list, e.g. "TEST" -- restricts
+#                          which keys are acted on. Unset = any valid key.
+#    JIRA_STATUS_QA          optional, default "QA"
+#    JIRA_STATUS_STAGING     optional, default "Staging"
+#    JIRA_STATUS_PRODUCTION  optional, default "Production"
+# ---------------------------------------------------------
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Deployment environment as used by deploy.yml (QA / staging / production)'
+        required: true
+        type: string
+      actor:
+        description: 'GitHub user who triggered the deployment'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  deployments: read
+
+jobs:
+  transition:
+    name: Transition Jira issues
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          # Full history: the range base can be many commits back, and a
+          # shallow clone would make `git log base..HEAD` fail outright.
+          fetch-depth: 0
+
+      - name: Resolve target status
+        id: target
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          STATUS_QA: ${{ vars.JIRA_STATUS_QA || 'QA' }}
+          STATUS_STAGING: ${{ vars.JIRA_STATUS_STAGING || 'Staging' }}
+          STATUS_PRODUCTION: ${{ vars.JIRA_STATUS_PRODUCTION || 'Production' }}
+        run: |
+          set -euo pipefail
+
+          case "$ENVIRONMENT" in
+            QA)         STATUS="$STATUS_QA" ;;
+            staging)    STATUS="$STATUS_STAGING" ;;
+            production) STATUS="$STATUS_PRODUCTION" ;;
+            *)
+              echo "::warning::Unknown environment '${ENVIRONMENT}' -- no Jira status mapped, nothing to do."
+              echo "status=" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          echo "Environment '${ENVIRONMENT}' maps to Jira status '${STATUS}'."
+          echo "status=${STATUS}" >> "$GITHUB_OUTPUT"
+
+      - name: Collect Jira issue keys from this deploy
+        id: keys
+        if: steps.target.outputs.status != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          BEFORE: ${{ github.event.before }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          PROJECT_KEYS: ${{ vars.JIRA_PROJECT_KEYS }}
+        run: |
+          set -euo pipefail
+
+          echo "::group::Range resolution"
+
+          BASE=""
+
+          # 1. Last successful deployment to this environment that is not
+          #    this very run. Deployments come back newest-first; 20 is a
+          #    generous ceiling on how many failed/pending records might sit
+          #    on top of the last good one.
+          CANDIDATES=$(gh api "repos/${REPO}/deployments?environment=${ENVIRONMENT}&per_page=100" \
+            --jq '[.[] | select(.sha != env.SHA)] | .[0:20] | .[] | "\(.id) \(.sha)"' 2>/dev/null || true)
+
+          while read -r id sha; do
+            [ -n "${id:-}" ] || continue
+            state=$(gh api "repos/${REPO}/deployments/${id}/statuses" --jq '.[0].state // ""' 2>/dev/null || true)
+            if [ "$state" = "success" ] && git cat-file -e "${sha}^{commit}" 2>/dev/null; then
+              BASE="$sha"
+              echo "Range base: last successful '${ENVIRONMENT}' deployment ${BASE} (deployment #${id})."
+              break
+            fi
+          done <<< "$CANDIDATES"
+
+          # 2. The branch head before this push.
+          if [ -z "$BASE" ] \
+             && [ -n "${BEFORE:-}" ] \
+             && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+             && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            BASE="$BEFORE"
+            echo "Range base: github.event.before ${BASE} (no prior successful deployment found)."
+          fi
+
+          # 3. Floor, so a fresh branch still reports something sensible.
+          if [ -n "$BASE" ]; then
+            RANGE="${BASE}..${SHA}"
+          elif git rev-parse -q --verify "${SHA}~20" >/dev/null; then
+            RANGE="${SHA}~20..${SHA}"
+            echo "Range base: fallback to the last 20 commits."
+          else
+            RANGE="$SHA"
+            echo "Range base: fallback to full history (branch is shorter than 20 commits)."
+          fi
+
+          echo "Commit range: ${RANGE}"
+          git log --format='  %h %s' "$RANGE"
+          echo "::endgroup::"
+
+          # A Jira key is 2+ leading chars (letter first) then -digits. The
+          # trailing (^|[^A-Z0-9]) style boundary is handled by grep -o on
+          # word-ish input; keys embedded in URLs (browse/TEST-42) still match.
+          KEYS=$(git log --format='%s%n%b' "$RANGE" \
+                 | grep -oE '\b[A-Z][A-Z0-9]{1,9}-[0-9]+\b' \
+                 | sort -u || true)
+
+          # Optional narrowing to specific project keys.
+          if [ -n "${PROJECT_KEYS:-}" ] && [ -n "$KEYS" ]; then
+            FILTER=$(printf '%s' "$PROJECT_KEYS" | tr ',' ' ' | tr -s ' ')
+            SELECTED=""
+            for key in $KEYS; do
+              prefix="${key%%-*}"
+              for allowed in $FILTER; do
+                if [ "$prefix" = "$allowed" ]; then
+                  SELECTED="${SELECTED}${key}"$'\n'
+                  break
+                fi
+              done
+            done
+            KEYS=$(printf '%s' "$SELECTED" | sed '/^$/d')
+            echo "Restricted to project key(s): ${FILTER}"
+          fi
+
+          if [ -z "$KEYS" ]; then
+            echo "No Jira issue keys found in this range -- nothing to transition."
+          else
+            echo "Found issue key(s):"
+            printf '  %s\n' $KEYS
+          fi
+
+          {
+            echo "keys<<KEYS_EOF"
+            printf '%s\n' "$KEYS"
+            echo "KEYS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Transition issues and comment
+        if: steps.target.outputs.status != '' && steps.keys.outputs.keys != ''
+        env:
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          TARGET_STATUS: ${{ steps.target.outputs.status }}
+          ISSUE_KEYS: ${{ steps.keys.outputs.keys }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          ACTOR: ${{ inputs.actor }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${JIRA_BASE_URL:-}" ] || [ -z "${JIRA_USER_EMAIL:-}" ] || [ -z "${JIRA_API_TOKEN:-}" ]; then
+            echo "::warning::Jira is not configured (need JIRA_BASE_URL variable + JIRA_USER_EMAIL/JIRA_API_TOKEN secrets) -- skipping."
+            exit 0
+          fi
+
+          BASE_URL="${JIRA_BASE_URL%/}"
+          AUTH=$(printf '%s:%s' "$JIRA_USER_EMAIL" "$JIRA_API_TOKEN" | base64 -w0)
+          SHORT_SHA="${SHA:0:7}"
+          IST_TIME=$(TZ='Asia/Kolkata' date '+%b %d, %Y %I:%M %p IST')
+          COMMIT_URL="${GITHUB_SERVER_URL}/${REPO}/commit/${SHA}"
+
+          jira() {
+            # jira <method> <path> [body-file] -> body on stdout, HTTP code in JIRA_HTTP
+            local method="$1" path="$2" body_file="${3:-}"
+            local args=(-sS -w '\n%{http_code}' -X "$method"
+                        -H "Authorization: Basic ${AUTH}"
+                        -H 'Accept: application/json'
+                        -H 'Content-Type: application/json')
+            [ -n "$body_file" ] && args+=(--data @"$body_file")
+            local out
+            out=$(curl "${args[@]}" "${BASE_URL}${path}" 2>/dev/null)
+            JIRA_HTTP="${out##*$'\n'}"
+            printf '%s' "${out%$'\n'*}"
+          }
+
+          MOVED=""; SKIPPED=""; FAILED=""
+
+          for KEY in $ISSUE_KEYS; do
+            echo "::group::${KEY}"
+
+            ISSUE=$(jira GET "/rest/api/3/issue/${KEY}?fields=status,summary")
+            if [ "$JIRA_HTTP" != "200" ]; then
+              # A commit can name a key that was never a real issue -- that is
+              # a typo, not a deploy problem, so it is only ever a warning.
+              echo "::warning::${KEY}: not found in Jira (HTTP ${JIRA_HTTP}) -- skipped."
+              SKIPPED="${SKIPPED}${KEY} (not found)\n"
+              echo "::endgroup::"; continue
+            fi
+
+            CURRENT=$(printf '%s' "$ISSUE" | jq -r '.fields.status.name // ""')
+            SUMMARY=$(printf '%s' "$ISSUE" | jq -r '.fields.summary // ""')
+            echo "${KEY}: \"${SUMMARY}\" is currently in '${CURRENT}'."
+
+            if [ "$CURRENT" = "$TARGET_STATUS" ]; then
+              echo "${KEY}: already in '${TARGET_STATUS}' -- no transition needed."
+              SKIPPED="${SKIPPED}${KEY} (already ${TARGET_STATUS})\n"
+            else
+              TRANSITIONS=$(jira GET "/rest/api/3/issue/${KEY}/transitions")
+              # Match on the transition's DESTINATION status, then fall back to
+              # the transition's own name -- boards often label the button
+              # differently from the column it lands in.
+              TID=$(printf '%s' "$TRANSITIONS" | jq -r --arg s "$TARGET_STATUS" '
+                ([.transitions[]? | select((.to.name // "") | ascii_downcase == ($s | ascii_downcase)) | .id]
+                 + [.transitions[]? | select((.name   // "") | ascii_downcase == ($s | ascii_downcase)) | .id]
+                )[0] // ""')
+
+              if [ -z "$TID" ]; then
+                AVAILABLE=$(printf '%s' "$TRANSITIONS" | jq -r '[.transitions[]?.to.name] | join(", ")')
+                echo "::warning::${KEY}: no transition from '${CURRENT}' to '${TARGET_STATUS}' (available: ${AVAILABLE:-none}) -- skipped."
+                SKIPPED="${SKIPPED}${KEY} (no path ${CURRENT} -> ${TARGET_STATUS})\n"
+                echo "::endgroup::"; continue
+              fi
+
+              jq -n --arg id "$TID" '{transition:{id:$id}}' > /tmp/transition.json
+              jira POST "/rest/api/3/issue/${KEY}/transitions" /tmp/transition.json >/dev/null
+              if [ "$JIRA_HTTP" != "204" ]; then
+                echo "::warning::${KEY}: transition to '${TARGET_STATUS}' failed (HTTP ${JIRA_HTTP})."
+                FAILED="${FAILED}${KEY} (transition HTTP ${JIRA_HTTP})\n"
+                echo "::endgroup::"; continue
+              fi
+              echo "${KEY}: ${CURRENT} -> ${TARGET_STATUS}"
+              MOVED="${MOVED}${KEY} (${CURRENT} -> ${TARGET_STATUS})\n"
+            fi
+
+            # Comment regardless of whether a transition was needed: the issue
+            # WAS included in this deployment either way, and that is the fact
+            # worth recording.
+            jq -n \
+              --arg env "$ENVIRONMENT" \
+              --arg time "$IST_TIME" \
+              --arg actor "$ACTOR" \
+              --arg repo "$REPO" \
+              --arg sha "$SHORT_SHA" \
+              --arg commit_url "$COMMIT_URL" \
+              --arg run_url "$RUN_URL" \
+              '{body:{type:"doc",version:1,content:[{type:"paragraph",content:[
+                 {type:"text",text:("Deployed to " + $env),marks:[{type:"strong"}]},
+                 {type:"text",text:(" on " + $time + " by " + $actor + " — " + $repo + " @ ")},
+                 {type:"text",text:$sha,marks:[{type:"link",attrs:{href:$commit_url}}]},
+                 {type:"text",text:" ("},
+                 {type:"text",text:"workflow run",marks:[{type:"link",attrs:{href:$run_url}}]},
+                 {type:"text",text:")"}
+               ]}]}}' > /tmp/comment.json
+
+            jira POST "/rest/api/3/issue/${KEY}/comment" /tmp/comment.json >/dev/null
+            if [ "$JIRA_HTTP" != "201" ]; then
+              echo "::warning::${KEY}: could not add deployment comment (HTTP ${JIRA_HTTP})."
+            fi
+
+            echo "::endgroup::"
+          done
+
+          {
+            echo "### Jira — deployed to ${ENVIRONMENT}"
+            echo ""
+            echo "| Result | Issues |"
+            echo "| ------ | ------ |"
+            printf '| Moved to `%s` | %s |\n' "$TARGET_STATUS" "$(printf '%b' "${MOVED:-—}" | paste -sd' ' -)"
+            printf '| Skipped | %s |\n' "$(printf '%b' "${SKIPPED:-—}" | paste -sd' ' -)"
+            printf '| Failed | %s |\n' "$(printf '%b' "${FAILED:-—}" | paste -sd' ' -)"
+          } >> "$GITHUB_STEP_SUMMARY"
