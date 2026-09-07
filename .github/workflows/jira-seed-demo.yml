@@ -1,0 +1,183 @@
+name: Jira Seed Demo Data
+
+# ---------------------------------------------------------
+#  THROWAWAY. Creates demo epics and stories in Jira so the Deployments
+#  page and the DORA reports have something to show. Delete this file once
+#  the demo data exists -- it is scaffolding, not part of the pipeline.
+#
+#  Runs only on manual dispatch, and refuses to do anything unless you
+#  explicitly type the project key, because it writes real issues into a
+#  real board and there is no bulk undo in Jira.
+#
+#  Issue type IDs are DISCOVERED, not hardcoded: team-managed and
+#  company-managed projects expose different type IDs for the same names,
+#  and hardcoding them is how this breaks on the next project.
+# ---------------------------------------------------------
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_project_key:
+        description: 'Type the project key to confirm (e.g. TEST). Nothing happens otherwise.'
+        required: true
+        type: string
+      epics:
+        description: 'Number of epics to create'
+        required: true
+        default: '4'
+        type: string
+      stories:
+        description: 'Total number of stories to spread across those epics'
+        required: true
+        default: '11'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    name: Create demo epics and stories
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create issues
+        env:
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          PROJECT_KEY: ${{ inputs.confirm_project_key }}
+          EPIC_COUNT: ${{ inputs.epics }}
+          STORY_COUNT: ${{ inputs.stories }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${JIRA_BASE_URL:-}" ] || [ -z "${JIRA_USER_EMAIL:-}" ] || [ -z "${JIRA_API_TOKEN:-}" ]; then
+            echo "::error::Jira is not configured."
+            exit 1
+          fi
+
+          BASE_URL="${JIRA_BASE_URL%/}"
+          AUTH=$(printf '%s:%s' "$JIRA_USER_EMAIL" "$JIRA_API_TOKEN" | base64 -w0)
+
+          JIRA_HTTP=""; JIRA_BODY=""
+          jira_api() {
+            local method="$1" path="$2" body_file="${3:-}"
+            local args=(-sS -w '\n%{http_code}' -X "$method"
+              -H "Authorization: Basic ${AUTH}"
+              -H 'Accept: application/json'
+              -H 'Content-Type: application/json')
+            [ -n "$body_file" ] && args+=(--data @"$body_file")
+            local out
+            out=$(curl "${args[@]}" "${BASE_URL}${path}" 2>/dev/null)
+            JIRA_HTTP="${out##*$'\n'}"
+            JIRA_BODY="${out%$'\n'*}"
+            [ -z "$JIRA_HTTP" ] && JIRA_HTTP="000"
+          }
+
+          jira_api GET "/rest/api/3/myself"
+          if [ "$JIRA_HTTP" != "200" ]; then
+            echo "::error::Jira auth failed (HTTP ${JIRA_HTTP})."
+            exit 1
+          fi
+          echo "Authenticated as $(printf '%s' "$JIRA_BODY" | jq -r '.displayName')."
+
+          # ---- discover issue type ids for this specific project -------------
+          jira_api GET "/rest/api/3/issue/createmeta?projectKeys=${PROJECT_KEY}&expand=projects.issuetypes.fields"
+          if [ "$JIRA_HTTP" != "200" ]; then
+            echo "::error::Could not read createmeta for ${PROJECT_KEY} (HTTP ${JIRA_HTTP})."
+            exit 1
+          fi
+          META="$JIRA_BODY"
+
+          echo "::group::Available issue types"
+          printf '%s' "$META" | jq -r '.projects[0].issuetypes[] | "  \(.id)  \(.name)  subtask=\(.subtask)"'
+          echo "::endgroup::"
+
+          type_id() {
+            printf '%s' "$META" | jq -r --arg n "$1" \
+              '[.projects[0].issuetypes[] | select((.name|ascii_downcase) == ($n|ascii_downcase)) | .id][0] // ""'
+          }
+
+          EPIC_TYPE=$(type_id Epic)
+          STORY_TYPE=$(type_id Story)
+          [ -z "$STORY_TYPE" ] && STORY_TYPE=$(type_id Task)
+
+          if [ -z "$EPIC_TYPE" ] || [ -z "$STORY_TYPE" ]; then
+            echo "::error::Need both an Epic and a Story/Task type in ${PROJECT_KEY}. Found epic='${EPIC_TYPE}' story='${STORY_TYPE}'."
+            exit 1
+          fi
+          echo "Epic type id ${EPIC_TYPE}, story type id ${STORY_TYPE}."
+
+          create_issue() {
+            # create_issue <type-id> <summary> [parent-key] -> key on stdout
+            local type="$1" summary="$2" parent="${3:-}"
+            jq -n --arg p "$PROJECT_KEY" --arg t "$type" --arg s "$summary" --arg par "$parent" \
+              '{fields: ({project:{key:$p}, issuetype:{id:$t}, summary:$s}
+                         + (if $par == "" then {} else {parent:{key:$par}} end))}' > /tmp/issue.json
+            jira_api POST "/rest/api/3/issue" /tmp/issue.json
+            if [ "$JIRA_HTTP" != "201" ]; then
+              # Company-managed projects reject `parent` on some configurations;
+              # the story is still worth creating without the epic link.
+              if [ -n "$parent" ]; then
+                echo "::warning::parent link rejected for \"${summary}\" (HTTP ${JIRA_HTTP}) -- retrying unparented." >&2
+                create_issue "$type" "$summary" ""
+                return
+              fi
+              echo "::warning::could not create \"${summary}\" (HTTP ${JIRA_HTTP}): $(printf '%s' "$JIRA_BODY" | head -c 300)" >&2
+              return
+            fi
+            printf '%s' "$JIRA_BODY" | jq -r '.key'
+          }
+
+          EPIC_NAMES=("Task list filtering" "Health and diagnostics" "Validation hardening" "API pagination")
+          STORY_NAMES=(
+            "filter tasks by completion state"
+            "add a created-after filter"
+            "expose filter counts in the list response"
+            "report dependency status on health"
+            "add a readiness probe endpoint"
+            "include build metadata in health"
+            "reject unknown fields on create"
+            "bound the description length"
+            "return per-field validation details"
+            "add cursor-based pagination"
+            "cap the maximum page size"
+          )
+
+          EPIC_KEYS=()
+          for i in $(seq 0 $((EPIC_COUNT - 1))); do
+            name="${EPIC_NAMES[$i]:-Demo epic $((i + 1))}"
+            key=$(create_issue "$EPIC_TYPE" "$name")
+            if [ -n "$key" ]; then
+              EPIC_KEYS+=("$key")
+              echo "epic   $key  $name"
+            fi
+          done
+
+          if [ ${#EPIC_KEYS[@]} -eq 0 ]; then
+            echo "::error::No epics were created; aborting before stories."
+            exit 1
+          fi
+
+          STORY_KEYS=()
+          for i in $(seq 0 $((STORY_COUNT - 1))); do
+            name="${STORY_NAMES[$i]:-Demo story $((i + 1))}"
+            parent="${EPIC_KEYS[$((i % ${#EPIC_KEYS[@]}))]}"
+            key=$(create_issue "$STORY_TYPE" "$name" "$parent")
+            if [ -n "$key" ]; then
+              STORY_KEYS+=("$key")
+              echo "story  $key  ($parent)  $name"
+            fi
+          done
+
+          # Machine-readable line so the caller can pick the keys straight out
+          # of the log without scraping prose.
+          echo "SEEDED_EPICS=${EPIC_KEYS[*]}"
+          echo "SEEDED_STORIES=${STORY_KEYS[*]}"
+
+          {
+            echo "### Seeded demo data in ${PROJECT_KEY}"
+            echo ""
+            echo "- **Epics (${#EPIC_KEYS[@]}):** ${EPIC_KEYS[*]}"
+            echo "- **Stories (${#STORY_KEYS[@]}):** ${STORY_KEYS[*]}"
+          } >> "$GITHUB_STEP_SUMMARY"
