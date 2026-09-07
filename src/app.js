@@ -19,7 +19,14 @@ export function createApp({ store = new TaskStore() } = {}) {
   app.use(express.json({ limit: '100kb' }));
 
   app.get('/health', (req, res) => {
-    res.json({ status: 'ok', uptime: process.uptime() });
+    // `timestamp` is the server's clock, not the client's. A caller comparing
+    // it against its own is how you catch clock drift between hosts, which
+    // otherwise shows up much later as inexplicable ordering bugs.
+    res.json({
+      status: 'ok',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+    });
   });
 
   app.use('/api/tasks', createTaskRouter(store));
