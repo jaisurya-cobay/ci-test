@@ -24,6 +24,13 @@ describe('GET /health', () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.status, 'ok');
   });
+
+  it('reports a parseable ISO timestamp', async () => {
+    const res = await request('GET', '/health');
+    // Round-tripping through Date proves it is a real instant, where a
+    // regex would only prove it is shaped like one.
+    assert.equal(new Date(res.body.timestamp).toISOString(), res.body.timestamp);
+  });
 });
 
 describe('POST /api/tasks', () => {
