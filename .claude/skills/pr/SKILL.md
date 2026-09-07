@@ -55,19 +55,28 @@ Check `git status --short`. If nothing is staged or modified, skip to step 3.
 
 Review the diff before writing the message — the message should describe the
 change's intent, not list the files. Then commit with a **Conventional Commit**
-subject carrying the key:
+subject carrying the key **at the end**:
 
 ```
-<type>(<scope>): TEST-123 <what changed>
+<type>(<scope>): <what changed> (TEST-123)
 ```
 
-`commitlint` runs on `commit-msg` and rejects anything else; `lint` and
-`prettier --check .` run on `pre-commit`. If a hook fails, fix the underlying
-problem — never reach for `--no-verify`. A local hook can be skipped but CI
-runs the same checks and cannot.
+The key goes last, not first. `config-conventional`'s `subject-case` rule
+forbids a subject starting with upper-case, so `feat: TEST-123 add filtering`
+is rejected outright. Jira scans the whole message, so the position makes no
+difference to the integration.
 
-Valid: `feat(api): TEST-123 add task filtering`
-Invalid: `updates`, `fix stuff`, `TEST-123`
+`commitlint` requires a key on `feat` and `fix` commits — the types the DORA
+reports measure. Housekeeping types (`chore`, `ci`, `docs`, `test`,
+`refactor`, `build`, `style`, `perf`) are exempt.
+
+`commitlint` runs on `commit-msg`; `lint` and `prettier --check .` run on
+`pre-commit`. If a hook fails, fix the underlying problem — never reach for
+`--no-verify`. A local hook can be skipped but CI runs the same checks and
+cannot.
+
+Valid: `feat(api): add task filtering (TEST-123)`
+Invalid: `updates`, `fix stuff`, `feat: TEST-123 add filtering`
 
 ### 3. Push the branch
 
