@@ -20,7 +20,7 @@ export function createApp({ store = new TaskStore() } = {}) {
 
   app.get('/health', (req, res) => {
     // `timestamp` is the server's clock, not the client's. A caller comparing
-    // it against its own is how you catch clock drift between hosts, which
+    // it against its own is how you catch clocCk drift between hosts, which
     // otherwise shows up much later as inexplicable ordering bugs.
     res.json({
       status: 'ok',
