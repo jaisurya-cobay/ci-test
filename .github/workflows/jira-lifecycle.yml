@@ -1,0 +1,189 @@
+name: Jira Lifecycle
+
+# ---------------------------------------------------------
+#  Keeps the Jira board in step with what developers actually do in Git,
+#  so nobody has to drag a card. One event, one transition:
+#
+#    branch created off a task   ->  In Progress
+#    PR opened into qa           ->  In Review
+#    merged to qa                ->  QA
+#    merged to develop           ->  Staging
+#    merged to master            ->  Production
+#
+#  DONE IS DELIBERATELY MANUAL. Automation stops at Production -- a human
+#  closes the issue after verifying it in production. Software should not
+#  declare someone else's work complete.
+#
+#  STANDALONE BY DESIGN: this never touches ci.yml or deploy.yml. Jira
+#  bookkeeping and the deploy pipeline are separate concerns, and a change
+#  to one must not be able to break the other.
+#
+#  THE JOIN IS THE ISSUE KEY. Nothing links Git to Jira except the literal
+#  string `TEST-42` appearing in a branch name, commit message, PR title or
+#  PR body. A change carrying no key is invisible to the board -- which is
+#  why the /pr command puts the key in for you.
+#
+#  All the real work lives in .github/scripts/jira-sync.sh so that these
+#  three jobs and the /pr command share one implementation.
+#
+#  CONFIGURATION
+#  Secrets:   JIRA_USER_EMAIL, JIRA_API_TOKEN
+#  Variables: JIRA_BASE_URL (required), JIRA_PROJECT_KEYS,
+#             JIRA_STATUS_IN_PROGRESS / _REVIEW / _QA / _STAGING / _PRODUCTION
+#             (defaults below match the TEST board's ladder)
+# ---------------------------------------------------------
+
+on:
+  create:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+    branches: [qa]
+  push:
+    branches: [qa, develop, master]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Verify credentials and report what would change, without touching Jira'
+        type: boolean
+        default: true
+
+concurrency:
+  group: jira-lifecycle-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+  JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+  JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+  JIRA_PROJECT_KEYS: ${{ vars.JIRA_PROJECT_KEYS }}
+
+jobs:
+  # ================================================================
+  #  Branch created off a Jira task  ->  In Progress
+  # ================================================================
+  in-progress:
+    name: Branch created → In Progress
+    # `create` also fires for tags, and for the long-lived environment
+    # branches, none of which represent someone starting a task.
+    if: >-
+      github.event_name == 'create' &&
+      github.event.ref_type == 'branch' &&
+      github.event.ref != 'qa' &&
+      github.event.ref != 'develop' &&
+      github.event.ref != 'master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Move referenced issues to In Progress
+        env:
+          TARGET_STATUS: ${{ vars.JIRA_STATUS_IN_PROGRESS || 'In Progress' }}
+          # The branch name is the only thing that exists at this point --
+          # there are no commits yet.
+          KEY_TEXT: ${{ github.event.ref }}
+          CONTEXT_LABEL: 'Branch created: ${{ github.event.ref }}'
+          CONTEXT_URL: ${{ github.server_url }}/${{ github.repository }}/tree/${{ github.event.ref }}
+          CONTEXT_URL_TEXT: view branch
+          ACTOR: ${{ github.actor }}
+        run: bash .github/scripts/jira-sync.sh
+
+  # ================================================================
+  #  PR opened into qa  ->  In Review
+  # ================================================================
+  in-review:
+    name: PR opened → In Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Move referenced issues to In Review
+        env:
+          TARGET_STATUS: ${{ vars.JIRA_STATUS_REVIEW || 'In Review' }}
+          # Title, branch name and body together -- developers reliably put
+          # the key in at least one of them, and /pr guarantees all three.
+          KEY_TEXT: |
+            ${{ github.event.pull_request.title }}
+            ${{ github.event.pull_request.head.ref }}
+            ${{ github.event.pull_request.body }}
+          CONTEXT_LABEL: 'Pull request #${{ github.event.pull_request.number }} opened for review'
+          CONTEXT_URL: ${{ github.event.pull_request.html_url }}
+          CONTEXT_URL_TEXT: 'PR #${{ github.event.pull_request.number }}'
+          ACTOR: ${{ github.actor }}
+        run: bash .github/scripts/jira-sync.sh
+
+  # ================================================================
+  #  Merged to an environment branch  ->  QA / Staging / Production
+  # ================================================================
+  promoted:
+    name: Merged → environment status
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Full history: the pushed range can reach back further than a
+          # shallow clone holds, and `git log base..HEAD` would just fail.
+          fetch-depth: 0
+
+      - name: Resolve environment
+        id: env
+        env:
+          BRANCH: ${{ github.ref_name }}
+          STATUS_QA: ${{ vars.JIRA_STATUS_QA || 'QA' }}
+          STATUS_STAGING: ${{ vars.JIRA_STATUS_STAGING || 'Staging' }}
+          STATUS_PRODUCTION: ${{ vars.JIRA_STATUS_PRODUCTION || 'Production' }}
+        run: |
+          set -euo pipefail
+          case "$BRANCH" in
+            qa)      LABEL="QA";         STATUS="$STATUS_QA" ;;
+            develop) LABEL="staging";    STATUS="$STATUS_STAGING" ;;
+            master)  LABEL="production"; STATUS="$STATUS_PRODUCTION" ;;
+            *)
+              echo "::notice::Branch '${BRANCH}' maps to no environment -- nothing to do."
+              echo "status=" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          echo "Branch '${BRANCH}' -> ${LABEL} -> Jira status '${STATUS}'."
+          echo "label=${LABEL}" >> "$GITHUB_OUTPUT"
+          echo "status=${STATUS}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve pushed commit range
+        id: range
+        if: steps.env.outputs.status != ''
+        env:
+          SHA: ${{ github.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # Absent on a manual run or a brand-new branch; fall back to a fixed
+          # window so the run still reports something rather than nothing.
+          if [ -n "${BEFORE:-}" ] \
+             && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+             && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            RANGE="${BEFORE}..${SHA}"
+          elif git rev-parse -q --verify "${SHA}~20" > /dev/null; then
+            RANGE="${SHA}~20..${SHA}"
+            echo "::notice::No push range available -- scanning the last 20 commits."
+          else
+            RANGE="$SHA"
+          fi
+          echo "Range: ${RANGE}"
+          git log --format='  %h %s' "$RANGE"
+          echo "range=${RANGE}" >> "$GITHUB_OUTPUT"
+
+      - name: Move referenced issues
+        if: steps.env.outputs.status != ''
+        env:
+          TARGET_STATUS: ${{ steps.env.outputs.status }}
+          KEY_RANGE: ${{ steps.range.outputs.range }}
+          CONTEXT_LABEL: 'Merged to ${{ steps.env.outputs.label }}'
+          CONTEXT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          CONTEXT_URL_TEXT: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        run: bash .github/scripts/jira-sync.sh
