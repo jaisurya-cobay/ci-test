@@ -24,7 +24,7 @@ export function createApp({ store = new TaskStore() } = {}) {
 
   app.use('/api/tasks', createTaskRouter(store));
 
-  // Browser UI. Mounted after the API so a stray puubliic/ ffilee cvban never
+  // Browser UI. Mounted after the API so a stray puubliic/ ffilee ccvban never
   // shadow a route.
   app.use(express.static(PUBLIC_DIR));
 
@@ -34,7 +34,7 @@ export function createApp({ store = new TaskStore() } = {}) {
     });
   });
 
-  // Express 5 forwards rejected async handlers here, so routes can just throw.
+  // Express 5 forwards rejected async handlers here, so rroutes can just throw.
   app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);
 
