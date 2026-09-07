@@ -41,6 +41,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Create issues
+        # NOT the default `bash -eo pipefail`: this script uses the
+        # `[ test ] && action` idiom, whose exit status is 1 when the test is
+        # false. Under -e that terminates the whole step silently, before any
+        # output is produced. jira-sync.sh avoids this only because it runs as
+        # `bash script.sh`, a fresh shell with no -e.
+        shell: bash {0}
         env:
           JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
@@ -66,12 +72,12 @@ jobs:
               -H "Authorization: Basic ${AUTH}"
               -H 'Accept: application/json'
               -H 'Content-Type: application/json')
-            [ -n "$body_file" ] && args+=(--data @"$body_file")
+            if [ -n "$body_file" ]; then args+=(--data @"$body_file"); fi
             local out
             out=$(curl "${args[@]}" "${BASE_URL}${path}" 2>/dev/null)
             JIRA_HTTP="${out##*$'\n'}"
             JIRA_BODY="${out%$'\n'*}"
-            [ -z "$JIRA_HTTP" ] && JIRA_HTTP="000"
+            if [ -z "$JIRA_HTTP" ]; then JIRA_HTTP="000"; fi
           }
 
           jira_api GET "/rest/api/3/myself"
@@ -100,7 +106,7 @@ jobs:
 
           EPIC_TYPE=$(type_id Epic)
           STORY_TYPE=$(type_id Story)
-          [ -z "$STORY_TYPE" ] && STORY_TYPE=$(type_id Task)
+          if [ -z "$STORY_TYPE" ]; then STORY_TYPE=$(type_id Task); fi
 
           if [ -z "$EPIC_TYPE" ] || [ -z "$STORY_TYPE" ]; then
             echo "::error::Need both an Epic and a Story/Task type in ${PROJECT_KEY}. Found epic='${EPIC_TYPE}' story='${STORY_TYPE}'."
